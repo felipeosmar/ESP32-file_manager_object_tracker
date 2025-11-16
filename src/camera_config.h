@@ -1,0 +1,46 @@
+/**
+ * Camera Pin Configuration for ESP32-CAM (AI-Thinker)
+ *
+ * Adjust these pins if you're using a different ESP32 camera board
+ */
+
+#ifndef CAMERA_CONFIG_H
+#define CAMERA_CONFIG_H
+
+// ESP32-CAM (AI-Thinker) pin definitions
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+// Servo pins (adjust based on your wiring)
+// Note: Avoid using pins that conflict with camera or SD card
+#define SERVO_PAN_PIN     12  // GPIO12 for Pan servo
+#define SERVO_TILT_PIN    13  // GPIO13 for Tilt servo
+
+// SD Card pins for ESP32-CAM (using SD_MMC)
+// SD_MMC uses dedicated pins:
+// CMD  = GPIO15
+// CLK  = GPIO14
+// DATA0 = GPIO2
+// DATA1 = GPIO4 (optional, for 4-bit mode)
+// DATA2 = GPIO12 (optional, for 4-bit mode)
+// DATA3 = GPIO13 (optional, for 4-bit mode)
+
+// Flash LED (built-in on most ESP32-CAM boards)
+#define FLASH_LED_PIN      4
+
+#endif // CAMERA_CONFIG_H

@@ -1,0 +1,12 @@
+{
+  "wifi": {
+    "ssid": "ESP32-Tracker",
+    "password": "12345678",
+    "ap_mode": true
+  },
+  "tracking": {
+    "motion_threshold": 30,
+    "speed": 5,
+    "auto_enabled": true
+  }
+}
