@@ -562,6 +562,13 @@ void setupWebServer() {
         Serial.printf("Upload start: %s (dir='%s', file='%s')\n",
                       filepath.c_str(), path.c_str(), filename.c_str());
 
+        // Delete existing file to prevent appending to old content
+        // FILE_WRITE mode appends if file exists, so we need to remove it first
+        if (SD_MMC.exists(filepath)) {
+          SD_MMC.remove(filepath);
+          Serial.printf("Existing file removed for overwrite: %s\n", filepath.c_str());
+        }
+
         uploadFile = SD_MMC.open(filepath, FILE_WRITE);
         if (!uploadFile) {
           Serial.printf("Failed to open file for writing: %s\n", filepath.c_str());

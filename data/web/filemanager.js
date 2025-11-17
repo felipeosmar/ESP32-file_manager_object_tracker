@@ -1,9 +1,13 @@
 let currentPath = '/';
+let currentFiles = []; // Store current directory files for duplicate check
 
 async function refreshFiles() {
     try {
         const response = await fetch('/api/files/list?dir=' + encodeURIComponent(currentPath));
         const data = await response.json();
+
+        // Store files list for duplicate checking
+        currentFiles = data.files || [];
 
         const fileList = document.getElementById('fileList');
         fileList.innerHTML = '';
@@ -13,7 +17,7 @@ async function refreshFiles() {
             fileList.appendChild(upItem);
         }
 
-        data.files.forEach(file => {
+        currentFiles.forEach(file => {
             const item = createFileItem(file.name, file.size, file.isDir);
             fileList.appendChild(item);
         });
@@ -167,6 +171,21 @@ async function handleFiles(files) {
 async function uploadFile(file) {
     console.log('Uploading file to path:', currentPath);
     console.log('File name:', file.name);
+
+    // Check if file already exists
+    const fileExists = currentFiles.some(f => f.name === file.name && !f.isDir);
+
+    if (fileExists) {
+        const confirm = window.confirm(
+            `O arquivo "${file.name}" já existe neste diretório.\n\n` +
+            `Deseja substituir o arquivo existente?`
+        );
+
+        if (!confirm) {
+            console.log('Upload cancelled by user');
+            return; // User cancelled the upload
+        }
+    }
 
     // Use query string to pass directory parameter instead of FormData
     // This ensures the parameter is available before the upload handler starts
