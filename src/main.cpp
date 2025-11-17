@@ -291,6 +291,95 @@ void setupWebServer() {
     request->send(200, "application/json", "{\"status\":\"ok\"}");
   });
 
+  // Health check endpoint with system diagnostics
+  server.on("/api/health/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+
+    // System uptime
+    unsigned long uptimeMs = millis();
+    unsigned long uptimeSec = uptimeMs / 1000;
+    unsigned long days = uptimeSec / 86400;
+    unsigned long hours = (uptimeSec % 86400) / 3600;
+    unsigned long minutes = (uptimeSec % 3600) / 60;
+    unsigned long seconds = uptimeSec % 60;
+
+    doc["uptime"]["milliseconds"] = uptimeMs;
+    doc["uptime"]["formatted"] = String(days) + "d " + String(hours) + "h " +
+                                  String(minutes) + "m " + String(seconds) + "s";
+
+    // Memory information
+    doc["memory"]["heap"]["total"] = ESP.getHeapSize();
+    doc["memory"]["heap"]["free"] = ESP.getFreeHeap();
+    doc["memory"]["heap"]["used"] = ESP.getHeapSize() - ESP.getFreeHeap();
+    doc["memory"]["heap"]["usage_percent"] = ((float)(ESP.getHeapSize() - ESP.getFreeHeap()) / ESP.getHeapSize()) * 100;
+
+    doc["memory"]["psram"]["total"] = ESP.getPsramSize();
+    doc["memory"]["psram"]["free"] = ESP.getFreePsram();
+    doc["memory"]["psram"]["used"] = ESP.getPsramSize() - ESP.getFreePsram();
+    if (ESP.getPsramSize() > 0) {
+      doc["memory"]["psram"]["usage_percent"] = ((float)(ESP.getPsramSize() - ESP.getFreePsram()) / ESP.getPsramSize()) * 100;
+    }
+
+    // WiFi information
+    doc["wifi"]["connected"] = WiFi.status() == WL_CONNECTED;
+    doc["wifi"]["ssid"] = WiFi.SSID();
+    doc["wifi"]["rssi"] = WiFi.RSSI();
+    doc["wifi"]["signal_strength"] = WiFi.RSSI() > -50 ? "Excellent" :
+                                      WiFi.RSSI() > -60 ? "Good" :
+                                      WiFi.RSSI() > -70 ? "Fair" : "Weak";
+    doc["wifi"]["ip"] = WiFi.localIP().toString();
+    doc["wifi"]["mac"] = WiFi.macAddress();
+    doc["wifi"]["channel"] = WiFi.channel();
+
+    // SD Card information
+    doc["sd_card"]["ready"] = sdManager.isReady();
+    if (sdManager.isReady()) {
+      uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+      uint64_t totalBytes = SD_MMC.totalBytes() / (1024 * 1024);
+      uint64_t usedBytes = SD_MMC.usedBytes() / (1024 * 1024);
+      uint64_t freeBytes = totalBytes - usedBytes;
+
+      doc["sd_card"]["card_size_mb"] = cardSize;
+      doc["sd_card"]["total_mb"] = totalBytes;
+      doc["sd_card"]["used_mb"] = usedBytes;
+      doc["sd_card"]["free_mb"] = freeBytes;
+      doc["sd_card"]["usage_percent"] = totalBytes > 0 ? ((float)usedBytes / totalBytes) * 100 : 0;
+      doc["sd_card"]["type"] = SD_MMC.cardType() == CARD_MMC ? "MMC" :
+                               SD_MMC.cardType() == CARD_SD ? "SDSC" :
+                               SD_MMC.cardType() == CARD_SDHC ? "SDHC" : "Unknown";
+    }
+
+    // CPU information
+    doc["cpu"]["frequency_mhz"] = ESP.getCpuFreqMHz();
+    doc["cpu"]["cores"] = 2; // ESP32 has 2 cores
+    doc["cpu"]["chip_model"] = ESP.getChipModel();
+    doc["cpu"]["chip_revision"] = ESP.getChipRevision();
+    doc["cpu"]["sdk_version"] = ESP.getSdkVersion();
+
+    // Flash information
+    doc["flash"]["size_mb"] = ESP.getFlashChipSize() / (1024 * 1024);
+    doc["flash"]["speed_mhz"] = ESP.getFlashChipSpeed() / 1000000;
+
+    // Application status
+    doc["application"]["tracking_enabled"] = config.autoTracking;
+    doc["application"]["motion_threshold"] = config.motionThreshold;
+    doc["application"]["tracking_speed"] = config.trackingSpeed;
+    doc["application"]["servo_pan"] = servoController.getPanAngle();
+    doc["application"]["servo_tilt"] = servoController.getTiltAngle();
+
+    // Overall health status
+    bool isHealthy = WiFi.status() == WL_CONNECTED &&
+                     ESP.getFreeHeap() > 50000 && // At least 50KB free heap
+                     (!sdManager.isReady() || SD_MMC.totalBytes() > SD_MMC.usedBytes()); // SD not full
+
+    doc["status"] = isHealthy ? "healthy" : "degraded";
+    doc["timestamp"] = uptimeMs;
+
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+  });
+
   // Serve CSS and JS files for File Manager
   server.on("/filemanager.css", HTTP_GET, [](AsyncWebServerRequest *request) {
     serveStaticFile(request, "/web/filemanager.css", "text/css");
@@ -298,6 +387,27 @@ void setupWebServer() {
 
   server.on("/filemanager.js", HTTP_GET, [](AsyncWebServerRequest *request) {
     serveStaticFile(request, "/web/filemanager.js", "application/javascript");
+  });
+
+  // Serve CSS and JS files for Health Monitor
+  server.on("/health.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    serveStaticFile(request, "/web/health.css", "text/css");
+  });
+
+  server.on("/health.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    serveStaticFile(request, "/web/health.js", "application/javascript");
+  });
+
+  // Health Monitor page
+  server.on("/health", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (sdManager.isReady()) {
+      request->send(SD_MMC, "/web/health.html", "text/html");
+    } else {
+      request->send(503, "text/html",
+        "<html><body><h1>Health Monitor unavailable</h1>"
+        "<p>SD card is required for Health Monitor functionality.</p>"
+        "<a href='/'>Back to Home</a></body></html>");
+    }
   });
 
   // File Manager endpoints
