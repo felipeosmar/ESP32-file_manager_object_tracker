@@ -39,6 +39,7 @@ function createFileItem(name, size, isDir, isUp = false) {
             <div class="file-size">${sizeStr}</div>
         </div>
         <div class="file-actions">
+            ${!isUp && !isDir ? `<button class="action-btn btn-success" onclick="editFile('${name}', event)">✏️ Editar</button>` : ''}
             ${!isUp && !isDir ? `<button class="action-btn btn-primary" onclick="downloadFile('${name}', event)">⬇️ Download</button>` : ''}
             ${!isUp && !isDir ? `<button class="action-btn btn-primary" onclick="viewFile('${name}', event)">👁️ Ver</button>` : ''}
             ${!isUp ? `<button class="action-btn btn-danger" onclick="deleteFile('${name}', ${isDir}, event)">🗑️ Deletar</button>` : ''}
@@ -220,6 +221,79 @@ async function uploadFile(file) {
         console.error('Upload exception:', error);
         alert('Erro: ' + error.message);
         progressBar.style.display = 'none';
+    }
+}
+
+// File editing functions
+let currentEditFile = '';
+
+async function editFile(name, event) {
+    event.stopPropagation();
+    const filepath = (currentPath + '/' + name).replace('//', '/');
+    currentEditFile = filepath;
+
+    try {
+        const response = await fetch('/api/files/read?file=' + encodeURIComponent(filepath));
+        const data = await response.json();
+
+        if (data.error) {
+            alert('Erro ao abrir arquivo: ' + data.error);
+            return;
+        }
+
+        // Check file size
+        if (data.size > 51200) {
+            alert('Arquivo muito grande para edição (máx 50KB)');
+            return;
+        }
+
+        // Open modal and populate editor
+        document.getElementById('editorTitle').textContent = '✏️ Editar: ' + name;
+        document.getElementById('fileEditor').value = data.content;
+        document.getElementById('editorModal').style.display = 'flex';
+    } catch (error) {
+        alert('Erro ao carregar arquivo: ' + error.message);
+    }
+}
+
+async function saveFile() {
+    const content = document.getElementById('fileEditor').value;
+    const formData = new FormData();
+    formData.append('file', currentEditFile);
+    formData.append('content', content);
+
+    try {
+        const response = await fetch('/api/files/write', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            alert('Erro ao salvar: ' + data.error);
+            return;
+        }
+
+        alert('Arquivo salvo com sucesso!');
+        closeEditor();
+        refreshFiles();
+    } catch (error) {
+        alert('Erro ao salvar arquivo: ' + error.message);
+    }
+}
+
+function closeEditor() {
+    document.getElementById('editorModal').style.display = 'none';
+    document.getElementById('fileEditor').value = '';
+    currentEditFile = '';
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('editorModal');
+    if (event.target === modal) {
+        closeEditor();
     }
 }
 

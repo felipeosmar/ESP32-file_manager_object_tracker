@@ -174,7 +174,7 @@ bool initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_VGA; // 640x480
+  config.frame_size = FRAMESIZE_QVGA; //Opções: QVGA (320x240), VGA (640x480), SVGA (800x600)
   config.jpeg_quality = 12;
   config.fb_count = 2;
 
@@ -387,6 +387,110 @@ void setupWebServer() {
     }
 
     request->send(SD_MMC, filepath, "text/plain", false);
+  });
+
+  // Read file content for editing (with size limit)
+  server.on("/api/files/read", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!sdManager.isReady()) {
+      request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
+      return;
+    }
+
+    if (!request->hasParam("file")) {
+      request->send(400, "application/json", "{\"error\":\"Missing file parameter\"}");
+      return;
+    }
+
+    String filepath = request->getParam("file")->value();
+    if (!SD_MMC.exists(filepath)) {
+      request->send(404, "application/json", "{\"error\":\"File not found\"}");
+      return;
+    }
+
+    // Acquire mutex for SD card access
+    if (xSemaphoreTake(sdCardMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      File file = SD_MMC.open(filepath, FILE_READ);
+      if (!file) {
+        xSemaphoreGive(sdCardMutex);
+        request->send(500, "application/json", "{\"error\":\"Failed to open file\"}");
+        return;
+      }
+
+      size_t fileSize = file.size();
+
+      // Limit file size to 50KB for safety
+      if (fileSize > 51200) {
+        file.close();
+        xSemaphoreGive(sdCardMutex);
+        request->send(413, "application/json", "{\"error\":\"File too large (max 50KB)\"}");
+        return;
+      }
+
+      String content = "";
+      content.reserve(fileSize + 1);
+
+      while (file.available()) {
+        content += (char)file.read();
+      }
+
+      file.close();
+      xSemaphoreGive(sdCardMutex);
+
+      JsonDocument doc;
+      doc["status"] = "ok";
+      doc["content"] = content;
+      doc["size"] = fileSize;
+
+      String response;
+      serializeJson(doc, response);
+      request->send(200, "application/json", response);
+    } else {
+      request->send(503, "application/json", "{\"error\":\"SD card busy\"}");
+    }
+  });
+
+  // Write file content (save edited file)
+  server.on("/api/files/write", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!sdManager.isReady()) {
+      request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
+      return;
+    }
+
+    if (!request->hasParam("file", true) || !request->hasParam("content", true)) {
+      request->send(400, "application/json", "{\"error\":\"Missing file or content parameter\"}");
+      return;
+    }
+
+    String filepath = request->getParam("file", true)->value();
+    String content = request->getParam("content", true)->value();
+
+    // Acquire mutex for SD card access
+    if (xSemaphoreTake(sdCardMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      File file = SD_MMC.open(filepath, FILE_WRITE);
+      if (!file) {
+        xSemaphoreGive(sdCardMutex);
+        request->send(500, "application/json", "{\"error\":\"Failed to open file for writing\"}");
+        return;
+      }
+
+      size_t written = file.print(content);
+      file.close();
+      xSemaphoreGive(sdCardMutex);
+
+      if (written > 0) {
+        JsonDocument doc;
+        doc["status"] = "ok";
+        doc["written"] = written;
+
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+      } else {
+        request->send(500, "application/json", "{\"error\":\"Failed to write file\"}");
+      }
+    } else {
+      request->send(503, "application/json", "{\"error\":\"SD card busy\"}");
+    }
   });
 
   // Delete file

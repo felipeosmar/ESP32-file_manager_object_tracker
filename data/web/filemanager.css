@@ -198,3 +198,99 @@ h1 {
     color: white;
     font-size: 12px;
 }
+
+/* Editor Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: white;
+    width: 90%;
+    max-width: 900px;
+    max-height: 90vh;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #28a745, #218838);
+    color: white;
+    padding: 20px 30px;
+    border-radius: 10px 10px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+}
+
+.close-btn {
+    font-size: 28px;
+    font-weight: bold;
+    color: white;
+    cursor: pointer;
+    transition: color 0.3s;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: #ddd;
+}
+
+.modal-body {
+    padding: 20px 30px;
+    flex: 1;
+    overflow: auto;
+}
+
+#fileEditor {
+    width: 100%;
+    min-height: 400px;
+    max-height: 60vh;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    padding: 15px;
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+#fileEditor:focus {
+    outline: 2px solid #28a745;
+    border-color: #28a745;
+}
+
+.modal-footer {
+    background: #f8f9fa;
+    padding: 15px 30px;
+    border-radius: 0 0 10px 10px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    border-top: 1px solid #dee2e6;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #5a6268;
+}

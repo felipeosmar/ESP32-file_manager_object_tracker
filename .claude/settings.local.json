@@ -21,7 +21,9 @@
       "mcp__chrome-devtools__evaluate_script",
       "mcp__chrome-devtools__get_network_request",
       "mcp__chrome-devtools__get_console_message",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__read_text_file"
     ],
     "deny": [],
     "ask": []

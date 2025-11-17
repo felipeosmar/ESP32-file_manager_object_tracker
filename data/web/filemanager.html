@@ -37,6 +37,23 @@
         </div>
     </div>
 
+    <!-- Editor Modal -->
+    <div id="editorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="editorTitle">✏️ Editar Arquivo</h2>
+                <span class="close-btn" onclick="closeEditor()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <textarea id="fileEditor" spellcheck="false"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditor()">❌ Cancelar</button>
+                <button class="btn btn-success" onclick="saveFile()">💾 Salvar</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/filemanager.js"></script>
 </body>
 </html>
