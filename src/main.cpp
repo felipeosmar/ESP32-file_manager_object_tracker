@@ -769,8 +769,8 @@ void streamJpg(AsyncWebServerRequest *request) {
 // getFileManagerHTML() removed - now served from SD card files to save memory
 
 /**
- * Serve static files from SD card with mutex protection
- * Prevents concurrent access issues that cause ERR_CONTENT_LENGTH_MISMATCH
+ * Serve static files from SD card using AsyncFileResponse
+ * ESPAsyncWebServer handles async file reading internally, no mutex needed
  */
 void serveStaticFile(AsyncWebServerRequest *request, const char* filepath, const char* contentType) {
   if (!sdManager.isReady()) {
@@ -785,27 +785,18 @@ void serveStaticFile(AsyncWebServerRequest *request, const char* filepath, const
     return;
   }
 
-  // Acquire mutex before accessing SD card
-  if (sdCardMutex != NULL && xSemaphoreTake(sdCardMutex, portMAX_DELAY) == pdTRUE) {
-    Serial.printf("Serving %s (mutex acquired)\n", filepath);
+  Serial.printf("Serving %s\n", filepath);
 
-    // Use native AsyncFileResponse - it handles streaming internally
-    // This is the recommended method from ESPAsyncWebServer library
-    AsyncWebServerResponse *response = request->beginResponse(SD_MMC, filepath, contentType);
+  // AsyncFileResponse handles file reading asynchronously and internally
+  // No mutex needed here as ESPAsyncWebServer manages the file access safely
+  AsyncWebServerResponse *response = request->beginResponse(SD_MMC, filepath, contentType);
 
-    if (response) {
-      response->addHeader("Cache-Control", "public, max-age=3600");
-      request->send(response);
-    } else {
-      Serial.printf("Failed to create response for %s\n", filepath);
-      request->send(500, "text/plain", "Failed to serve file");
-    }
-
-    // Release mutex after creating response (AsyncFileResponse will handle the actual file reading)
-    xSemaphoreGive(sdCardMutex);
+  if (response) {
+    response->addHeader("Cache-Control", "public, max-age=3600");
+    request->send(response);
   } else {
-    Serial.printf("Failed to acquire mutex for %s\n", filepath);
-    request->send(503, "text/plain", "Server busy");
+    Serial.printf("Failed to create response for %s\n", filepath);
+    request->send(500, "text/plain", "Failed to serve file");
   }
 }
 
