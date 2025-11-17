@@ -32,6 +32,9 @@ MotionDetector motionDetector;
 ServoController servoController;
 SDManager sdManager;
 
+// Mutex for SD card access (prevents concurrent access issues)
+SemaphoreHandle_t sdCardMutex = NULL;
+
 // Configuration
 struct Config {
   char ssid[32];
@@ -50,10 +53,17 @@ bool loadConfig();
 void setDefaultConfig();
 String getBuiltinHTML();
 void streamJpg(AsyncWebServerRequest *request);
+void serveStaticFile(AsyncWebServerRequest *request, const char* filepath, const char* contentType);
 
 void setup() {
   Serial.begin(115200);
   Serial.println("\n\n=== ESP32 Object Tracker ===");
+
+  // Create mutex for SD card access
+  sdCardMutex = xSemaphoreCreateMutex();
+  if (sdCardMutex == NULL) {
+    Serial.println("Failed to create SD card mutex!");
+  }
 
   // Initialize SD card first
   Serial.println("Initializing SD card...");
@@ -233,27 +243,11 @@ void setupWebServer() {
   });
 
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (sdManager.isReady()) {
-      Serial.println("Serving style.css");
-      AsyncWebServerResponse *response = request->beginResponse(SD_MMC, "/web/style.css", "text/css");
-      response->addHeader("Cache-Control", "public, max-age=3600");
-      request->send(response);
-    } else {
-      Serial.println("style.css - SD not ready");
-      request->send(404, "text/plain", "SD card not available");
-    }
+    serveStaticFile(request, "/web/style.css", "text/css");
   });
 
   server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (sdManager.isReady()) {
-      Serial.println("Serving app.js");
-      AsyncWebServerResponse *response = request->beginResponse(SD_MMC, "/web/app.js", "application/javascript");
-      response->addHeader("Cache-Control", "public, max-age=3600");
-      request->send(response);
-    } else {
-      Serial.println("app.js - SD not ready");
-      request->send(404, "text/plain", "SD card not available");
-    }
+    serveStaticFile(request, "/web/app.js", "application/javascript");
   });
 
   // Camera stream endpoint - MJPEG streaming
@@ -299,19 +293,11 @@ void setupWebServer() {
 
   // Serve CSS and JS files for File Manager
   server.on("/filemanager.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (sdManager.isReady()) {
-      request->send(SD_MMC, "/web/filemanager.css", "text/css");
-    } else {
-      request->send(404, "text/plain", "CSS file not available - SD card required");
-    }
+    serveStaticFile(request, "/web/filemanager.css", "text/css");
   });
 
   server.on("/filemanager.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (sdManager.isReady()) {
-      request->send(SD_MMC, "/web/filemanager.js", "application/javascript");
-    } else {
-      request->send(404, "text/plain", "JavaScript file not available - SD card required");
-    }
+    serveStaticFile(request, "/web/filemanager.js", "application/javascript");
   });
 
   // File Manager endpoints
@@ -677,6 +663,47 @@ void streamJpg(AsyncWebServerRequest *request) {
 }
 
 // getFileManagerHTML() removed - now served from SD card files to save memory
+
+/**
+ * Serve static files from SD card with mutex protection
+ * Prevents concurrent access issues that cause ERR_CONTENT_LENGTH_MISMATCH
+ */
+void serveStaticFile(AsyncWebServerRequest *request, const char* filepath, const char* contentType) {
+  if (!sdManager.isReady()) {
+    Serial.printf("Cannot serve %s - SD not ready\n", filepath);
+    request->send(503, "text/plain", "SD card not available");
+    return;
+  }
+
+  if (!SD_MMC.exists(filepath)) {
+    Serial.printf("File not found: %s\n", filepath);
+    request->send(404, "text/plain", "File not found");
+    return;
+  }
+
+  // Acquire mutex before accessing SD card
+  if (sdCardMutex != NULL && xSemaphoreTake(sdCardMutex, portMAX_DELAY) == pdTRUE) {
+    Serial.printf("Serving %s (mutex acquired)\n", filepath);
+
+    // Use native AsyncFileResponse - it handles streaming internally
+    // This is the recommended method from ESPAsyncWebServer library
+    AsyncWebServerResponse *response = request->beginResponse(SD_MMC, filepath, contentType);
+
+    if (response) {
+      response->addHeader("Cache-Control", "public, max-age=3600");
+      request->send(response);
+    } else {
+      Serial.printf("Failed to create response for %s\n", filepath);
+      request->send(500, "text/plain", "Failed to serve file");
+    }
+
+    // Release mutex after creating response (AsyncFileResponse will handle the actual file reading)
+    xSemaphoreGive(sdCardMutex);
+  } else {
+    Serial.printf("Failed to acquire mutex for %s\n", filepath);
+    request->send(503, "text/plain", "Server busy");
+  }
+}
 
 String getBuiltinHTML() {
   return R"HTML(
