@@ -82,9 +82,6 @@ function updateDisplay(data) {
 
     // CPU & Hardware
     updateHardware(data.cpu, data.flash);
-
-    // Application
-    updateApplication(data.application);
 }
 
 // Update overall status
@@ -193,16 +190,7 @@ function updateHardware(cpu, flash) {
     }
 }
 
-// Update application status
-function updateApplication(app) {
-    if (!app) return;
-
-    document.getElementById('app-tracking').textContent = app.tracking_enabled ? 'Ativo' : 'Inativo';
-    document.getElementById('app-pan').textContent = app.servo_pan ? `${app.servo_pan}°` : '--';
-    document.getElementById('app-tilt').textContent = app.servo_tilt ? `${app.servo_tilt}°` : '--';
-    document.getElementById('app-threshold').textContent = app.motion_threshold || '--';
-    document.getElementById('app-speed').textContent = app.tracking_speed || '--';
-}
+// Update application status (removed - no tracking functionality)
 
 // Update progress bar
 function updateProgressBar(elementId, percentage) {

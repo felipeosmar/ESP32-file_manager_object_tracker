@@ -24,7 +24,8 @@
       "WebFetch(domain:github.com)",
       "mcp__filesystem__directory_tree",
       "mcp__filesystem__read_text_file",
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []

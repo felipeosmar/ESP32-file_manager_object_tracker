@@ -1,17 +1,16 @@
 /**
- * ESP32 Object Tracker with Pan/Tilt Control
+ * ESP32-CAM File Manager with OTA Updates
  *
  * Hardware:
- * - ESP32-CAM (or ESP32 with OV2640 camera)
- * - 2x Servo motors (Pan and Tilt)
+ * - ESP32-CAM
  * - SD Card module
  *
  * Features:
  * - Web interface served from SD card
  * - Real-time camera streaming
- * - Motion detection and object tracking
- * - Automatic pan/tilt adjustment to center objects
+ * - File manager (upload, download, edit, delete)
  * - Configuration via JSON file on SD card
+ * - Over-the-air (OTA) firmware updates
  */
 
 #include <Arduino.h>
@@ -19,30 +18,31 @@
 #include <ESPAsyncWebServer.h>
 #include <SD_MMC.h>
 #include <ArduinoJson.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include "esp_camera.h"
 #include "camera_config.h"
-#include "motion_detector.h"
-#include "servo_controller.h"
 #include "web_server.h"
 #include "sd_manager.h"
 
 // Global objects
 AsyncWebServer server(80);
-MotionDetector motionDetector;
-ServoController servoController;
 SDManager sdManager;
 
 // Mutex for SD card access (prevents concurrent access issues)
 SemaphoreHandle_t sdCardMutex = NULL;
+
+// OTA update flags
+bool otaUploadInProgress = false;
+bool firstRequestAfterBoot = true;
+bool cameraActive = true; // Flag to control camera access during OTA
 
 // Configuration
 struct Config {
   char ssid[32];
   char password[64];
   bool apMode;
-  int motionThreshold;
-  int trackingSpeed;
-  bool autoTracking;
 } config;
 
 // Function declarations
@@ -54,10 +54,12 @@ void setDefaultConfig();
 String getBuiltinHTML();
 void streamJpg(AsyncWebServerRequest *request);
 void serveStaticFile(AsyncWebServerRequest *request, const char* filepath, const char* contentType);
+bool isValidESP32Firmware(uint8_t *data, size_t len);
+void validateOTABoot();
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\n=== ESP32 Object Tracker ===");
+  Serial.println("\n\n=== ESP32-CAM File Manager ===");
 
   // Create mutex for SD card access
   sdCardMutex = xSemaphoreCreateMutex();
@@ -91,22 +93,13 @@ void setup() {
   }
   Serial.println("Camera initialized successfully");
 
-  // Initialize servos
-  Serial.println("Initializing servos...");
-  servoController.begin(SERVO_PAN_PIN, SERVO_TILT_PIN);
-  servoController.setCenter();
-  Serial.println("Servos initialized and centered");
-
-  // Initialize motion detector
-  motionDetector.begin(config.motionThreshold);
-
   // Setup WiFi
   setupWiFi();
 
   // Setup web server
   setupWebServer();
 
-  Serial.println("\n=== System Ready ===");
+  Serial.println("\nB=== System Ready ===");
   Serial.print("Camera stream: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
@@ -114,42 +107,14 @@ void setup() {
 }
 
 void loop() {
-  static unsigned long lastFrameTime = 0;
-  static unsigned long lastTrackingUpdate = 0;
-  const unsigned long frameInterval = 100; // 10 FPS for motion detection
-  const unsigned long trackingInterval = 50; // 20 Hz for servo updates
-
-  unsigned long currentTime = millis();
-
-  // Process motion detection and tracking
-  if (config.autoTracking && (currentTime - lastFrameTime >= frameInterval)) {
-    lastFrameTime = currentTime;
-
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
-      // Detect motion and get object center
-      Point objectCenter = motionDetector.detectMotion(fb->buf, fb->width, fb->height);
-
-      if (objectCenter.x != -1 && objectCenter.y != -1) {
-        // Object detected - calculate error from center
-        int centerX = fb->width / 2;
-        int centerY = fb->height / 2;
-        int errorX = objectCenter.x - centerX;
-        int errorY = objectCenter.y - centerY;
-
-        // Update servo positions to center the object
-        if (currentTime - lastTrackingUpdate >= trackingInterval) {
-          lastTrackingUpdate = currentTime;
-          servoController.updateTracking(errorX, errorY, config.trackingSpeed);
-        }
-      }
-
-      esp_camera_fb_return(fb);
-    }
+  // Skip camera operations if OTA upload is in progress
+  if (!cameraActive) {
+    delay(100);
+    return;
   }
 
   // Small delay to prevent watchdog issues
-  delay(1);
+  delay(10);
 }
 
 bool initCamera() {
@@ -223,10 +188,72 @@ void setupWiFi() {
       Serial.println(WiFi.localIP());
     } else {
       Serial.println("\nFailed to connect, switching to AP mode");
-      WiFi.softAP("ESP32-Tracker", "12345678");
+      WiFi.softAP("ESP32-CAM", "12345678");
       Serial.print("AP IP: ");
       Serial.println(WiFi.softAPIP());
     }
+  }
+}
+
+/**
+ * Validate ESP32 firmware binary format
+ * ESP32 binaries start with magic byte 0xE9
+ *
+ * @param data Pointer to first bytes of file
+ * @param len Length of data buffer
+ * @return true if valid ESP32 binary, false otherwise
+ */
+bool isValidESP32Firmware(uint8_t *data, size_t len) {
+  if (len < 1) {
+    Serial.println("Firmware validation failed: data too short");
+    return false;
+  }
+
+  // ESP32 binary magic byte
+  const uint8_t ESP32_MAGIC_BYTE = 0xE9;
+
+  if (data[0] != ESP32_MAGIC_BYTE) {
+    Serial.printf("Invalid firmware: magic byte is 0x%02X, expected 0xE9\n", data[0]);
+    return false;
+  }
+
+  Serial.println("Firmware validation passed: ESP32 magic byte detected");
+  return true;
+}
+
+/**
+ * Validate OTA boot after firmware update
+ * Called on first HTTP request after boot to mark partition as valid
+ * Prevents automatic rollback by ESP32 bootloader
+ */
+void validateOTABoot() {
+  if (!firstRequestAfterBoot) {
+    return; // Already validated
+  }
+
+  firstRequestAfterBoot = false;
+
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  esp_ota_img_states_t ota_state;
+
+  if (esp_ota_get_state_partition(running, &ota_state) != ESP_OK) {
+    Serial.println("Failed to get OTA partition state");
+    return;
+  }
+
+  if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+    Serial.println("First boot after OTA update detected");
+    Serial.println("Web server responding successfully - marking partition valid");
+
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+      Serial.println("OTA update validated successfully - rollback cancelled");
+    } else {
+      Serial.println("Failed to mark OTA partition valid");
+    }
+  } else if (ota_state == ESP_OTA_IMG_VALID) {
+    Serial.println("Running from valid OTA partition");
+  } else if (ota_state == ESP_OTA_IMG_INVALID) {
+    Serial.println("Running from invalid partition (should not happen)");
   }
 }
 
@@ -235,6 +262,7 @@ void setupWebServer() {
 
   // Serve static files from SD card
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    validateOTABoot();
     if (sdManager.isReady()) {
       request->send(SD_MMC, "/web/index.html", "text/html");
     } else {
@@ -252,44 +280,6 @@ void setupWebServer() {
 
   // Camera stream endpoint - MJPEG streaming
   server.on("/stream", HTTP_GET, streamJpg);
-
-  // API endpoints
-  server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    JsonDocument doc;
-    doc["tracking"] = config.autoTracking;
-    doc["pan"] = servoController.getPanAngle();
-    doc["tilt"] = servoController.getTiltAngle();
-    doc["motion_threshold"] = config.motionThreshold;
-    doc["tracking_speed"] = config.trackingSpeed;
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-  });
-
-  server.on("/api/tracking", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("enabled", true)) {
-      config.autoTracking = request->getParam("enabled", true)->value() == "true";
-    }
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
-  });
-
-  server.on("/api/center", HTTP_POST, [](AsyncWebServerRequest *request) {
-    servoController.setCenter();
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
-  });
-
-  server.on("/api/manual", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("pan", true)) {
-      int pan = request->getParam("pan", true)->value().toInt();
-      servoController.setPan(pan);
-    }
-    if (request->hasParam("tilt", true)) {
-      int tilt = request->getParam("tilt", true)->value().toInt();
-      servoController.setTilt(tilt);
-    }
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
-  });
 
   // Health check endpoint with system diagnostics
   server.on("/api/health/status", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -360,12 +350,8 @@ void setupWebServer() {
     doc["flash"]["size_mb"] = ESP.getFlashChipSize() / (1024 * 1024);
     doc["flash"]["speed_mhz"] = ESP.getFlashChipSpeed() / 1000000;
 
-    // Application status
-    doc["application"]["tracking_enabled"] = config.autoTracking;
-    doc["application"]["motion_threshold"] = config.motionThreshold;
-    doc["application"]["tracking_speed"] = config.trackingSpeed;
-    doc["application"]["servo_pan"] = servoController.getPanAngle();
-    doc["application"]["servo_tilt"] = servoController.getTiltAngle();
+    // OTA status
+    doc["ota"]["upload_in_progress"] = otaUploadInProgress;
 
     // Overall health status
     bool isHealthy = WiFi.status() == WL_CONNECTED &&
@@ -400,6 +386,7 @@ void setupWebServer() {
 
   // Health Monitor page
   server.on("/health", HTTP_GET, [](AsyncWebServerRequest *request) {
+    validateOTABoot();
     if (sdManager.isReady()) {
       request->send(SD_MMC, "/web/health.html", "text/html");
     } else {
@@ -412,6 +399,7 @@ void setupWebServer() {
 
   // File Manager endpoints
   server.on("/filemanager", HTTP_GET, [](AsyncWebServerRequest *request) {
+    validateOTABoot();
     if (sdManager.isReady()) {
       request->send(SD_MMC, "/web/filemanager.html", "text/html");
     } else {
@@ -422,8 +410,145 @@ void setupWebServer() {
     }
   });
 
+  // Firmware update page and assets
+  server.on("/firmware", HTTP_GET, [](AsyncWebServerRequest *request) {
+    validateOTABoot();
+    if (sdManager.isReady()) {
+      request->send(SD_MMC, "/web/firmware.html", "text/html");
+    } else {
+      request->send(503, "text/html",
+        "<html><body><h1>Firmware Update unavailable</h1>"
+        "<p>SD card is required for Firmware Update functionality.</p>"
+        "<a href='/'>Back to Home</a></body></html>");
+    }
+  });
+
+  server.on("/firmware.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    serveStaticFile(request, "/web/firmware.css", "text/css");
+  });
+
+  server.on("/firmware.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    serveStaticFile(request, "/web/firmware.js", "application/javascript");
+  });
+
+  // OTA Firmware Upload endpoint
+  server.on("/api/firmware/upload", HTTP_POST,
+    // Response callback (executed after upload completes)
+    [](AsyncWebServerRequest *request) {
+      // Release SD card mutex
+      if (otaUploadInProgress) {
+        xSemaphoreGive(sdCardMutex);
+        otaUploadInProgress = false;
+        Serial.println("OTA upload finished - SD card mutex released");
+      }
+
+      // Check for errors
+      if (Update.hasError()) {
+        String error = "Update failed. Error: ";
+        error += Update.errorString();
+        Serial.println(error);
+        request->send(500, "application/json",
+          "{\"error\":\"" + error + "\"}");
+        return;
+      }
+
+      // Success - send response and reboot
+      Serial.println("OTA Update successful! Rebooting...");
+      request->send(200, "application/json",
+        "{\"status\":\"ok\",\"message\":\"Firmware updated. Rebooting...\"}");
+
+      delay(1000); // Give time for response to be sent
+      ESP.restart();
+    },
+
+    // Upload chunk callback (executed for each data chunk)
+    [](AsyncWebServerRequest *request, String filename, size_t index,
+       uint8_t *data, size_t len, bool final) {
+
+      // First chunk - initialize OTA update
+      if (index == 0) {
+        Serial.printf("OTA Update started: %s\n", filename.c_str());
+
+        // Stop camera access from loop() task
+        cameraActive = false;
+        Serial.println("Camera access paused");
+        delay(200); // Give time for loop() to exit camera operations
+
+        // Deinitialize camera to free shared pins (SD card shares pins with camera)
+        Serial.println("Deinitializing camera before OTA...");
+        esp_err_t err = esp_camera_deinit();
+        if (err != ESP_OK) {
+          Serial.printf("Camera deinit warning: %d\n", err);
+        } else {
+          Serial.println("Camera deinitialized successfully");
+        }
+        delay(100); // Give time for camera to fully stop
+
+        // Acquire SD card mutex to block file operations
+        if (xSemaphoreTake(sdCardMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+          Serial.println("OTA Upload failed: SD card busy");
+          return; // Mutex unavailable, upload will fail
+        }
+        otaUploadInProgress = true;
+        Serial.println("OTA upload - SD card mutex acquired");
+
+        // Validate ESP32 firmware format
+        if (!isValidESP32Firmware(data, len)) {
+          Serial.println("OTA Upload failed: Invalid firmware file");
+          xSemaphoreGive(sdCardMutex);
+          otaUploadInProgress = false;
+          return; // Invalid firmware, upload will fail
+        }
+
+        // Begin OTA update
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+          Serial.printf("OTA Update.begin() failed: %s\n", Update.errorString());
+          xSemaphoreGive(sdCardMutex);
+          otaUploadInProgress = false;
+          return;
+        }
+
+        Serial.println("OTA Update initialized successfully");
+      }
+
+      // Write chunk to flash
+      if (len) {
+        size_t written = Update.write(data, len);
+        if (written != len) {
+          Serial.printf("OTA Write error: wrote %d of %d bytes\n", written, len);
+          Update.abort();
+          return;
+        }
+
+        // Feed watchdog every ~8KB to prevent timeout
+        if (index % 8192 == 0) {
+          delay(1);
+        }
+
+        // Log progress every 64KB
+        if (index % 65536 == 0) {
+          Serial.printf("OTA Progress: %d bytes written\n", index + len);
+        }
+      }
+
+      // Final chunk - complete OTA update
+      if (final) {
+        if (Update.end(true)) {
+          Serial.printf("OTA Update completed successfully: %d bytes\n", index + len);
+        } else {
+          Serial.printf("OTA Update.end() failed: %s\n", Update.errorString());
+        }
+      }
+    }
+  );
+
   // List files in directory
   server.on("/api/files/list", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "application/json", "{\"error\":\"System busy - firmware update in progress\"}");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
       return;
@@ -459,6 +584,11 @@ void setupWebServer() {
 
   // Download file
   server.on("/api/files/download", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "text/plain", "System busy - firmware update in progress");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "text/plain", "SD card not ready");
       return;
@@ -480,6 +610,11 @@ void setupWebServer() {
 
   // View file content
   server.on("/api/files/view", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "text/plain", "System busy - firmware update in progress");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "text/plain", "SD card not ready");
       return;
@@ -501,6 +636,11 @@ void setupWebServer() {
 
   // Read file content for editing (with size limit)
   server.on("/api/files/read", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "application/json", "{\"error\":\"System busy - firmware update in progress\"}");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
       return;
@@ -561,6 +701,11 @@ void setupWebServer() {
 
   // Write file content (save edited file)
   server.on("/api/files/write", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "application/json", "{\"error\":\"System busy - firmware update in progress\"}");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
       return;
@@ -605,6 +750,11 @@ void setupWebServer() {
 
   // Delete file
   server.on("/api/files/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "application/json", "{\"error\":\"System busy - firmware update in progress\"}");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
       return;
@@ -647,6 +797,11 @@ void setupWebServer() {
     },
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
       static File uploadFile;
+
+      if (otaUploadInProgress) {
+        Serial.println("File upload blocked: OTA in progress");
+        return;
+      }
 
       if (!sdManager.isReady()) {
         Serial.println("Upload failed: SD not ready");
@@ -710,6 +865,11 @@ void setupWebServer() {
 
   // Create directory
   server.on("/api/files/mkdir", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (otaUploadInProgress) {
+      request->send(503, "application/json", "{\"error\":\"System busy - firmware update in progress\"}");
+      return;
+    }
+
     if (!sdManager.isReady()) {
       Serial.println("Mkdir failed: SD not ready");
       request->send(503, "application/json", "{\"error\":\"SD card not ready\"}");
@@ -734,6 +894,12 @@ void setupWebServer() {
     }
   });
 
+  // 404 handler with OTA boot validation
+  server.onNotFound([](AsyncWebServerRequest *request) {
+    validateOTABoot();
+    request->send(404, "text/plain", "Not found");
+  });
+
   server.begin();
   Serial.println("Web server started");
 }
@@ -756,24 +922,18 @@ bool loadConfig() {
     return false;
   }
 
-  strlcpy(config.ssid, doc["wifi"]["ssid"] | "ESP32-Tracker", sizeof(config.ssid));
+  strlcpy(config.ssid, doc["wifi"]["ssid"] | "ESP32-CAM", sizeof(config.ssid));
   strlcpy(config.password, doc["wifi"]["password"] | "12345678", sizeof(config.password));
   config.apMode = doc["wifi"]["ap_mode"] | false;
-  config.motionThreshold = doc["tracking"]["motion_threshold"] | 30;
-  config.trackingSpeed = doc["tracking"]["speed"] | 5;
-  config.autoTracking = doc["tracking"]["auto_enabled"] | true;
 
   Serial.println("Configuration loaded from SD card");
   return true;
 }
 
 void setDefaultConfig() {
-  strcpy(config.ssid, "ESP32-Tracker");
+  strcpy(config.ssid, "ESP32-CAM");
   strcpy(config.password, "12345678");
   config.apMode = true;
-  config.motionThreshold = 30;
-  config.trackingSpeed = 5;
-  config.autoTracking = true;
 }
 
 void streamJpg(AsyncWebServerRequest *request) {
@@ -793,6 +953,12 @@ void streamJpg(AsyncWebServerRequest *request) {
 
       // If we don't have a current frame, get a new one
       if (currentFrame == NULL) {
+        // Check if camera is active (not during OTA)
+        if (!cameraActive) {
+          delay(100);
+          return 0; // Stop streaming during OTA
+        }
+
         // Frame rate limit
         if (now - lastFrameTime < 100) {  // 100ms = 10 FPS
           delay(100 - (now - lastFrameTime));
@@ -922,37 +1088,21 @@ String getBuiltinHTML() {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ESP32 Object Tracker</title>
+  <title>ESP32-CAM Stream</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: Arial; margin: 20px; background: #f0f0f0; }
     .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
     h1 { color: #333; }
     img { width: 100%; border-radius: 5px; }
-    .controls { margin-top: 20px; }
-    button { padding: 10px 20px; margin: 5px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
-    button:hover { background: #0056b3; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>ESP32 Object Tracker</h1>
+    <h1>📷 ESP32-CAM Stream</h1>
     <p>SD card not available - using built-in interface</p>
     <img src="/stream" alt="Camera Stream">
-    <div class="controls">
-      <button onclick="fetch('/api/center', {method: 'POST'})">Center</button>
-      <button onclick="toggleTracking()">Toggle Tracking</button>
-    </div>
   </div>
-  <script>
-    function toggleTracking() {
-      fetch('/api/tracking', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'enabled=true'
-      });
-    }
-  </script>
 </body>
 </html>
   )HTML";

@@ -26,11 +26,6 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-// Servo pins (adjust based on your wiring)
-// Note: Avoid using pins that conflict with camera or SD card
-#define SERVO_PAN_PIN     12  // GPIO12 for Pan servo
-#define SERVO_TILT_PIN    13  // GPIO13 for Tilt servo
-
 // SD Card pins for ESP32-CAM (using SD_MMC)
 // SD_MMC uses dedicated pins:
 // CMD  = GPIO15

@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 Object Tracker</title>
+    <title>ESP32-CAM Stream</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🎯 ESP32 Object Tracker</h1>
+            <h1>📷 ESP32-CAM Stream</h1>
             <div class="header-right">
                 <div class="status-bar">
                     <span class="status-item">
@@ -18,6 +18,7 @@
                     </span>
                 </div>
                 <a href="/health" class="filemanager-btn">🏥 Saúde</a>
+                <a href="/firmware" class="filemanager-btn">🚀 Firmware</a>
                 <a href="/filemanager" class="filemanager-btn">📁 Arquivos</a>
             </div>
         </header>
@@ -27,68 +28,6 @@
             <section class="camera-section">
                 <div class="camera-container">
                     <img id="camera-stream" src="/stream" alt="Camera Stream" onerror="handleStreamError()">
-                    <div class="crosshair"></div>
-                    <div class="tracking-indicator" id="tracking-indicator">
-                        <div class="tracking-dot"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Controls -->
-            <section class="controls-section">
-                <div class="control-group">
-                    <h2>Rastreamento Automático</h2>
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="auto-tracking" checked>
-                        <label for="auto-tracking">
-                            <span class="slider"></span>
-                        </label>
-                        <span class="toggle-label" id="tracking-label">Ativo</span>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <h2>Controle Manual</h2>
-                    <div class="manual-controls">
-                        <div class="joystick-container">
-                            <button class="btn-direction" onclick="moveServo('tilt', 5)">▲</button>
-                            <div class="joystick-middle">
-                                <button class="btn-direction" onclick="moveServo('pan', -5)">◄</button>
-                                <button class="btn-center" onclick="centerServos()">⊙</button>
-                                <button class="btn-direction" onclick="moveServo('pan', 5)">►</button>
-                            </div>
-                            <button class="btn-direction" onclick="moveServo('tilt', -5)">▼</button>
-                        </div>
-
-                        <div class="sliders">
-                            <div class="slider-group">
-                                <label>Pan: <span id="pan-value">90</span>°</label>
-                                <input type="range" id="pan-slider" min="0" max="180" value="90"
-                                       oninput="updatePanTilt('pan', this.value)">
-                            </div>
-                            <div class="slider-group">
-                                <label>Tilt: <span id="tilt-value">90</span>°</label>
-                                <input type="range" id="tilt-slider" min="0" max="180" value="90"
-                                       oninput="updatePanTilt('tilt', this.value)">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <h2>Configurações</h2>
-                    <div class="settings">
-                        <div class="setting-item">
-                            <label>Sensibilidade de Movimento: <span id="threshold-value">30</span></label>
-                            <input type="range" id="motion-threshold" min="10" max="100" value="30"
-                                   oninput="updateThreshold(this.value)">
-                        </div>
-                        <div class="setting-item">
-                            <label>Velocidade de Rastreamento: <span id="speed-value">5</span></label>
-                            <input type="range" id="tracking-speed" min="1" max="10" value="5"
-                                   oninput="updateSpeed(this.value)">
-                        </div>
-                    </div>
                 </div>
             </section>
 
@@ -97,27 +36,19 @@
                 <h2>Status do Sistema</h2>
                 <div class="info-grid">
                     <div class="info-item">
-                        <span class="info-label">Pan:</span>
-                        <span class="info-value" id="info-pan">90°</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Tilt:</span>
-                        <span class="info-value" id="info-tilt">90°</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Rastreamento:</span>
-                        <span class="info-value" id="info-tracking">Ativo</span>
-                    </div>
-                    <div class="info-item">
                         <span class="info-label">FPS:</span>
                         <span class="info-value" id="info-fps">--</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Resolução:</span>
+                        <span class="info-value">SVGA (800x600)</span>
                     </div>
                 </div>
             </section>
         </main>
 
         <footer>
-            <p>ESP32 Object Tracker v1.0 | Camera: OV2640 | © 2024</p>
+            <p>ESP32-CAM File Manager v1.0 | Camera: OV2640 | © 2024</p>
         </footer>
     </div>
 
