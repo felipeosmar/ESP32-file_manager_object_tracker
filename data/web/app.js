@@ -20,7 +20,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function checkConnection() {
     try {
-        const response = await fetch('/stream', { method: 'HEAD' });
+        // Use lightweight health check instead of HEAD /stream
+        // This prevents 404 errors and doesn't interfere with the active stream
+        const response = await fetch('/api/health/status', {
+            method: 'GET',
+            cache: 'no-cache'
+        });
         if (response.ok) {
             if (!isConnected) {
                 isConnected = true;
@@ -60,19 +65,13 @@ function handleStreamError() {
     img.alt = 'Stream não disponível';
 }
 
-function monitorStreamFPS() {
-    const img = document.getElementById('camera-stream');
-    let frameCount = 0;
-
-    img.addEventListener('load', function() {
-        frameCount++;
-    });
-
-    setInterval(() => {
-        fps = frameCount;
-        frameCount = 0;
-        document.getElementById('info-fps').textContent = fps + ' fps';
-    }, 1000);
+async function monitorStreamFPS() {
+    // Display estimated FPS based on camera configuration
+    // Monitoring the actual stream would create a second connection and overload the ESP32
+    const fpsElement = document.getElementById('info-fps');
+    if (fpsElement) {
+        fpsElement.textContent = '~16 fps';
+    }
 }
 
 console.log('ESP32-CAM Stream Ready');

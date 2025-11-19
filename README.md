@@ -1,101 +1,84 @@
-# ESP32 Object Tracker with Pan/Tilt Control
+# ESP32-CAM File Manager
 
-Sistema de rastreamento de objetos usando ESP32-CAM com câmera OV2640 e controle automático de servos Pan/Tilt.
+Sistema completo de gerenciamento de arquivos e streaming de vídeo para ESP32-CAM com suporte a atualizações OTA (Over-The-Air).
 
-## 📋 Características
+## Características
 
-- ✅ Streaming de vídeo em tempo real via web
-- ✅ Detecção de movimento e rastreamento de objetos
-- ✅ Controle automático de servos Pan/Tilt com PID
-- ✅ Interface web responsiva armazenada em cartão SD
-- ✅ Configuração via arquivo JSON no SD card
-- ✅ Modo AP (Access Point) ou Station WiFi
-- ✅ Controle manual via interface web
-- ✅ Atalhos de teclado para controle rápido
+- **Streaming de Vídeo em Tempo Real**: Stream MJPEG da câmera OV2640 via interface web
+- **Gerenciador de Arquivos Completo**: Upload, download, edição, exclusão e visualização de arquivos no cartão SD
+- **Atualizações OTA**: Sistema seguro de atualização de firmware over-the-air com validação e rollback automático
+- **Monitor de Saúde do Sistema**: Dashboard completo com métricas de CPU, memória, WiFi e cartão SD
+- **Interface Web Responsiva**: Interface moderna e intuitiva armazenada no cartão SD
+- **Configuração via JSON**: Configuração de WiFi e sistema através de arquivo JSON no cartão SD
+- **Modo AP e Station**: Suporta tanto Access Point quanto conexão a redes WiFi existentes
 
-## 🔧 Hardware Necessário
+## Hardware Necessário
 
-### Componentes Principais
-- **ESP32-CAM** (ou ESP32 com módulo câmera OV2640)
-- **Câmera OV2640** (640x480 VGA)
-- **2x Servos** (SG90 ou similar, 0-180°)
-- **Cartão microSD** (mínimo 1GB, formatado FAT32)
-- **Fonte 5V** (mínimo 2A recomendado)
+- **ESP32-CAM** (AI-Thinker ou similar)
+- **Cartão MicroSD** (formatado em FAT32)
+- **Programador USB-Serial** (FTDI ou CP2102) para upload inicial
+- **Fonte de alimentação 5V** (mínimo 500mA recomendado)
 
-### Conexões
+### Pinout ESP32-CAM
 
-#### Servos
-```
-Servo Pan:  GPIO 12 (ajustável em camera_config.h)
-Servo Tilt: GPIO 13 (ajustável em camera_config.h)
-```
+O projeto utiliza os pinos padrão do módulo ESP32-CAM:
 
-#### Câmera OV2640
-As conexões da câmera seguem o padrão ESP32-CAM (AI-Thinker):
-```
-PWDN  = GPIO32    Y9 = GPIO35    VSYNC = GPIO25
-RESET = -1        Y8 = GPIO34    HREF  = GPIO23
-XCLK  = GPIO0     Y7 = GPIO39    PCLK  = GPIO22
-SIOD  = GPIO26    Y6 = GPIO36
-SIOC  = GPIO27    Y5 = GPIO21
-                  Y4 = GPIO19
-                  Y3 = GPIO18
-                  Y2 = GPIO5
-```
+**Câmera OV2640:**
+- Y2-Y9: GPIO5, GPIO18, GPIO19, GPIO21, GPIO36, GPIO39, GPIO34, GPIO35
+- XCLK: GPIO0
+- PCLK: GPIO22
+- VSYNC: GPIO25
+- HREF: GPIO23
+- SDA: GPIO26
+- SCL: GPIO27
+- PWDN: GPIO32
+- RESET: -1 (não usado)
 
-#### Cartão SD
-O ESP32-CAM usa o modo SD_MMC (1-bit):
-```
-CMD   = GPIO15
-CLK   = GPIO14
-DATA0 = GPIO2
-```
+**Cartão SD (modo 1-bit):**
+- CLK: GPIO14
+- CMD: GPIO15
+- DATA0: GPIO2
 
-### Diagrama de Pinagem
-```
-ESP32-CAM
-┌─────────────────┐
-│  ┌─────────┐    │
-│  │ OV2640  │    │──── Servo Pan (GPIO12)
-│  │ Camera  │    │
-│  └─────────┘    │──── Servo Tilt (GPIO13)
-│                 │
-│   [SD Card]     │──── 5V Power
-│                 │
-└─────────────────┘──── GND
-```
+## Instalação
 
-## 📦 Software e Bibliotecas
+### 1. Preparação do Ambiente
 
-### Dependências (instaladas via PlatformIO)
-```ini
-- ESP32Servo (v1.2.1+)
-- ESPAsyncWebServer (v1.2.6+)
-- AsyncTCP (v1.1.4+)
-- ArduinoJson (v7.0.4+)
-```
-
-### Instalação
-
-1. **Clone ou copie este projeto**
 ```bash
-cd ESP32-object_tracker
+# Clone o repositório
+git clone https://github.com/seu-usuario/ESP32-file_manager_object_tracker.git
+cd ESP32-file_manager_object_tracker
+
+# Instale o PlatformIO (se ainda não tiver)
+pip install platformio
+
+# Compile o projeto
+pio run
 ```
 
-2. **Prepare o cartão SD**
-   - Formate o cartão SD como FAT32
-   - Crie uma pasta chamada `web` na raiz do SD
-   - Copie os arquivos da pasta `data/` para o SD:
-     ```
-     SD Card/
-     ├── web/
-     │   ├── index.html
-     │   ├── style.css
-     │   └── app.js
-     └── config.json
-     ```
+### 2. Preparação do Cartão SD
 
-3. **Configure WiFi** (edite `config.json` no SD card)
+1. Formate o cartão SD em **FAT32**
+2. Crie a estrutura de diretórios:
+```
+/web/
+  ├── index.html
+  ├── style.css
+  ├── app.js
+  ├── filemanager.html
+  ├── filemanager.css
+  ├── filemanager.js
+  ├── health.html
+  ├── health.css
+  ├── health.js
+  ├── firmware.html
+  ├── firmware.css
+  └── firmware.js
+/config.json (opcional)
+```
+
+3. Copie todos os arquivos da pasta `data/web/` para o diretório `/web/` do cartão SD
+
+4. (Opcional) Crie o arquivo `config.json` na raiz do cartão SD:
 ```json
 {
   "wifi": {
@@ -106,285 +89,338 @@ cd ESP32-object_tracker
 }
 ```
 
-4. **Compile e faça upload**
+**Nota:** Se o arquivo `config.json` não existir, o ESP32-CAM iniciará em modo Access Point com:
+- SSID: `ESP32-CAM`
+- Senha: `12345678`
+
+### 3. Upload do Firmware
+
 ```bash
-pio run -t upload
+# Conecte o programador USB-Serial ao ESP32-CAM
+# GND -> GND
+# 5V -> 5V
+# U0R (RX) -> TX do programador
+# U0T (TX) -> RX do programador
+# GPIO0 -> GND (para entrar em modo flash)
+
+# Faça o upload
+pio run --target upload
+
+# Remova o jumper GPIO0->GND e pressione o botão RESET
 ```
 
-5. **Monitor Serial** (opcional)
+## Uso
+
+### Primeira Conexão
+
+1. **Modo AP (padrão sem config.json):**
+   - Conecte-se à rede WiFi `ESP32-CAM` (senha: `12345678`)
+   - Acesse: `http://192.168.4.1`
+
+2. **Modo Station (com config.json):**
+   - O ESP32 conectará à rede configurada
+   - Verifique o IP no Serial Monitor (115200 baud)
+   - Acesse: `http://[IP_DO_ESP32]`
+
+### Páginas Disponíveis
+
+- **`/`** - Página principal com stream de vídeo
+- **`/filemanager`** - Gerenciador de arquivos
+- **`/health`** - Monitor de saúde do sistema
+- **`/firmware`** - Atualização de firmware OTA
+
+### API Endpoints
+
+#### Camera
+- `GET /stream` - Stream MJPEG da câmera
+
+#### Arquivos
+- `GET /api/files/list?dir=/path` - Lista arquivos em um diretório
+- `GET /api/files/download?file=/path/file` - Baixa um arquivo
+- `GET /api/files/view?file=/path/file` - Visualiza conteúdo do arquivo
+- `GET /api/files/read?file=/path/file` - Lê arquivo para edição (máx 50KB)
+- `POST /api/files/write` - Salva arquivo editado
+- `POST /api/files/upload?dir=/path` - Upload de arquivo
+- `POST /api/files/delete` - Deleta arquivo/diretório
+- `POST /api/files/mkdir` - Cria diretório
+
+#### Sistema
+- `GET /api/health/status` - Status completo do sistema
+
+#### Firmware
+- `POST /api/firmware/upload` - Upload de novo firmware (.bin)
+
+## Atualização OTA (Over-The-Air)
+
+### Como Atualizar o Firmware
+
+1. Compile o novo firmware:
 ```bash
-pio device monitor
+pio run
+# O arquivo .bin estará em: .pio/build/esp32cam/firmware.bin
 ```
 
-## 🚀 Uso
+2. Acesse a página de firmware: `http://[IP_DO_ESP32]/firmware`
 
-### Primeira Inicialização
+3. Selecione o arquivo `.bin` e faça o upload
 
-1. Insira o cartão SD no ESP32
-2. Conecte a alimentação 5V
-3. O ESP32 irá:
-   - Inicializar o SD card
-   - Carregar configurações do `config.json`
-   - Inicializar a câmera
-   - Configurar os servos (centralizar)
-   - Conectar ao WiFi ou criar AP
+4. O ESP32 irá:
+   - Validar o firmware (verifica magic byte 0xE9)
+   - Desativar a câmera temporariamente
+   - Gravar o novo firmware na partição OTA
+   - Reiniciar automaticamente
 
-### Acessando a Interface Web
+5. Na primeira requisição HTTP após o boot, o sistema valida a partição OTA e cancela o rollback automático
 
-**Modo AP (padrão):**
+### Segurança OTA
+
+- **Validação de Firmware**: Verifica se o arquivo é um binário ESP32 válido
+- **Rollback Automático**: Se o novo firmware não responder em ~60 segundos, o bootloader retorna à versão anterior
+- **Mutex de Proteção**: Bloqueia operações do cartão SD durante a atualização
+- **Desativação da Câmera**: Libera pinos compartilhados durante a gravação
+
+### Particionamento
+
+O projeto usa o esquema `min_spiffs.csv`:
+- **app0 (ota_0)**: 1.9MB - Primeira partição OTA
+- **app1 (ota_1)**: 1.9MB - Segunda partição OTA
+- **spiffs**: 190KB - Sistema de arquivos (não utilizado, SD card é usado)
+
+## Arquitetura do Sistema
+
+### Estrutura de Código
+
 ```
-SSID: ESP32-Tracker
-Senha: 12345678
-URL: http://192.168.4.1
-```
+src/
+├── main.cpp          # Loop principal e configuração do servidor
+├── camera_config.h   # Configuração de pinos da câmera
+├── sd_manager.h/cpp  # Gerenciamento do cartão SD
+└── web_server.h      # Definições do servidor web
 
-**Modo Station:**
-```
-Verifique o IP no Serial Monitor
-URL: http://[IP-do-ESP32]
-```
-
-### Interface Web
-
-A interface possui 4 seções principais:
-
-#### 1. Visualização da Câmera
-- Stream em tempo real
-- Mira central (crosshair)
-- Indicador de objeto rastreado
-
-#### 2. Rastreamento Automático
-- **Toggle ON/OFF**: Ativa/desativa rastreamento
-- Quando ativo, os servos seguem automaticamente objetos em movimento
-
-#### 3. Controle Manual
-- **Joystick virtual**: Controle direcional
-- **Botão Center**: Centraliza os servos (90°/90°)
-- **Sliders Pan/Tilt**: Ajuste preciso (0-180°)
-
-#### 4. Configurações
-- **Sensibilidade**: Threshold de detecção (10-100)
-- **Velocidade**: Rapidez do rastreamento (1-10)
-
-### Atalhos de Teclado
-```
-↑ ↓ ← →  : Controle manual dos servos
-C        : Centralizar servos
-T        : Toggle rastreamento automático
+data/web/
+├── index.html        # Página principal com stream
+├── style.css         # Estilos globais
+├── app.js           # JavaScript do stream
+├── filemanager.*    # Gerenciador de arquivos
+├── health.*         # Monitor de saúde
+└── firmware.*       # Interface de atualização OTA
 ```
 
-## ⚙️ Configuração Avançada
+### Fluxo de Inicialização
 
-### Arquivo config.json
+1. **Inicialização do Serial** (115200 baud)
+2. **Criação do Mutex** para controle de acesso ao SD
+3. **Inicialização do SD Card** (modo 1-bit)
+4. **Carregamento da Configuração** (config.json)
+5. **Inicialização da Câmera** (OV2640, VGA, JPEG)
+6. **Configuração WiFi** (AP ou Station)
+7. **Inicialização do Servidor Web** (porta 80)
+8. **Sistema Pronto**
+
+### Gerenciamento de Recursos
+
+- **Mutex para SD Card**: Previne acessos concorrentes durante operações críticas (OTA, leitura/escrita)
+- **Controle de Câmera**: Flag `cameraActive` para pausar câmera durante OTA
+- **Watchdog**: Delays estratégicos para alimentar o watchdog durante operações longas
+- **Frame Rate**: Limitado a ~10 FPS para estabilidade
+- **Buffer de Upload**: Operações em chunks para gerenciar memória
+
+## Monitor de Saúde
+
+O endpoint `/api/health/status` retorna informações completas:
 
 ```json
 {
+  "uptime": {
+    "milliseconds": 123456,
+    "formatted": "0d 0h 2m 3s"
+  },
+  "memory": {
+    "heap": {
+      "total": 327680,
+      "free": 250000,
+      "used": 77680,
+      "usage_percent": 23.7
+    },
+    "psram": {
+      "total": 4194304,
+      "free": 4000000,
+      "used": 194304,
+      "usage_percent": 4.6
+    }
+  },
   "wifi": {
+    "connected": true,
     "ssid": "MinhaRede",
-    "password": "MinhasEnha",
-    "ap_mode": false,
-    "hostname": "esp32-tracker"
+    "rssi": -65,
+    "signal_strength": "Good",
+    "ip": "192.168.1.100",
+    "mac": "AA:BB:CC:DD:EE:FF",
+    "channel": 6
   },
-  "camera": {
-    "framesize": "VGA",
-    "quality": 12,
-    "brightness": 0,
-    "contrast": 0,
-    "saturation": 0
+  "sd_card": {
+    "ready": true,
+    "card_size_mb": 7580,
+    "total_mb": 7456,
+    "used_mb": 1234,
+    "free_mb": 6222,
+    "usage_percent": 16.5,
+    "type": "SDHC"
   },
-  "servos": {
-    "pan_pin": 12,
-    "tilt_pin": 13,
-    "pan_min": 0,
-    "pan_max": 180,
-    "tilt_min": 0,
-    "tilt_max": 180,
-    "pan_center": 90,
-    "tilt_center": 90
+  "cpu": {
+    "frequency_mhz": 240,
+    "cores": 2,
+    "chip_model": "ESP32-D0WDQ6",
+    "chip_revision": 1,
+    "sdk_version": "v4.4.6"
   },
-  "tracking": {
-    "motion_threshold": 30,
-    "speed": 5,
-    "auto_enabled": true,
-    "pid_p": 0.5,
-    "pid_i": 0.0,
-    "pid_d": 0.1
+  "flash": {
+    "size_mb": 4,
+    "speed_mhz": 80
   },
-  "system": {
-    "serial_baud": 115200,
-    "web_port": 80,
-    "stream_fps": 10
-  }
+  "ota": {
+    "upload_in_progress": false
+  },
+  "status": "healthy",
+  "timestamp": 123456
 }
 ```
 
-### Ajuste do PID
+## Configuração da Câmera
 
-O controle dos servos usa um algoritmo PID. Para ajustar:
+Configurações padrão (ajustáveis em `src/main.cpp`):
 
+- **Frame Size**: VGA (640x480)
+- **Qualidade JPEG**: 12 (0-63, menor = melhor qualidade)
+- **Frame Buffer Count**: 2
+- **Formato**: JPEG
+- **Frequência XCLK**: 20MHz
+
+Para alterar a resolução, modifique em `main.cpp:142`:
 ```cpp
-servoController.setPIDGains(
-  0.5,  // P - Proporcional (resposta imediata)
-  0.0,  // I - Integral (correção de erro acumulado)
-  0.1   // D - Derivativo (suavização)
-);
+config.frame_size = FRAMESIZE_QVGA;  // 320x240
+config.frame_size = FRAMESIZE_VGA;   // 640x480 (padrão)
+config.frame_size = FRAMESIZE_SVGA;  // 800x600
+config.frame_size = FRAMESIZE_XGA;   // 1024x768
 ```
 
-**Dicas de ajuste:**
-- **P alto**: Resposta rápida, mas pode oscilar
-- **I**: Útil para eliminar erro residual (use com cuidado)
-- **D alto**: Movimento mais suave, mas resposta lenta
+## Dependências
 
-## 📡 API REST
+Definidas em `platformio.ini`:
 
-### Endpoints Disponíveis
+- **Platform**: espressif32
+- **Framework**: Arduino
+- **Bibliotecas**:
+  - ESPAsyncWebServer (async web server)
+  - AsyncTCP (TCP assíncrono)
+  - ArduinoJson 7.0.4 (manipulação JSON)
 
-#### GET /api/status
-Retorna status atual do sistema
-```json
-{
-  "tracking": true,
-  "pan": 90,
-  "tilt": 90,
-  "motion_threshold": 30,
-  "tracking_speed": 5
-}
+## Solução de Problemas
+
+### Cartão SD não detectado
+- Verifique se o cartão está formatado em FAT32
+- Teste com cartão de menor capacidade (≤32GB funciona melhor)
+- Verifique conexões físicas
+
+### Câmera não inicializa
+- Erro comum com módulos AI-Thinker
+- Verifique alimentação (mínimo 500mA)
+- Adicione capacitor 100-470µF entre 5V e GND
+
+### WiFi não conecta
+- Verifique SSID e senha no `config.json`
+- Força do sinal fraco: aproxime o ESP32 do roteador
+- Se falhar, entrará em modo AP automaticamente
+
+### OTA falha
+- Verifique se o arquivo é `.bin` válido
+- Arquivo muito grande: máximo ~1.9MB
+- Durante upload, evite operações no SD
+
+### Stream lento/travando
+- Reduza resolução (QVGA = 320x240)
+- Aumente qualidade JPEG (valor maior = menor qualidade = arquivo menor)
+- Verifique força do sinal WiFi
+
+## Desenvolvimento
+
+### Compilar e Monitorar
+
+```bash
+# Compilar
+pio run
+
+# Upload
+pio run --target upload
+
+# Monitor serial
+pio device monitor
+
+# Compilar + Upload + Monitor
+pio run --target upload && pio device monitor
 ```
 
-#### POST /api/tracking
-Ativa/desativa rastreamento automático
-```
-Parâmetros: enabled=true|false
-```
+### Debug
 
-#### POST /api/center
-Centraliza os servos (90°/90°)
-
-#### POST /api/manual
-Controle manual dos servos
-```
-Parâmetros: pan=0-180, tilt=0-180
+O nível de debug está configurado em `platformio.ini`:
+```ini
+build_flags =
+    -DCORE_DEBUG_LEVEL=3  # 0=None, 1=Error, 2=Warn, 3=Info, 4=Debug, 5=Verbose
 ```
 
-#### GET /stream
-Stream MJPEG da câmera
-```
-Content-Type: multipart/x-mixed-replace; boundary=frame
-```
+### Modificar Interface Web
 
-## 🔍 Detecção de Movimento
+1. Edite os arquivos em `data/web/`
+2. Copie os arquivos modificados para o cartão SD
+3. Reinicie o ESP32 ou atualize a página (Ctrl+F5)
 
-### Algoritmo
+## Especificações Técnicas
 
-1. **Amostragem**: Frame reduzido para 80x60 pixels (performance)
-2. **Diferenciação**: Comparação com frame anterior
-3. **Threshold**: Pixels com diferença > threshold são marcados
-4. **Centroid**: Cálculo do centro de massa dos pixels marcados
-5. **PID**: Ajuste dos servos para centralizar o objeto
+- **MCU**: ESP32-D0WDQ6 (dual-core 240MHz)
+- **Câmera**: OV2640 (2MP)
+- **RAM**: 520KB SRAM + 4MB PSRAM
+- **Flash**: 4MB
+- **WiFi**: 802.11 b/g/n (2.4GHz)
+- **Protocolo Stream**: MJPEG over HTTP
+- **Servidor Web**: Assíncrono (não bloqueante)
 
-### Otimização
+## Consumo de Recursos
 
-- Frame rate de detecção: ~10 FPS
-- Update dos servos: 20 Hz
-- Downsampling: 80x60 pixels para processamento
+- **Memória Heap**: ~250KB livre (de 320KB)
+- **PSRAM**: ~4MB livre (usado principalmente para buffers de câmera)
+- **Taxa de Transferência**: ~10 FPS @ VGA
+- **Tamanho do Firmware**: ~1.2MB
 
-## 🛠️ Troubleshooting
+## Licença
 
-### Problemas Comuns
+Este projeto é fornecido como está, para fins educacionais e de desenvolvimento.
 
-**Câmera não inicializa**
-```
-- Verifique as conexões
-- Certifique-se que está usando ESP32-CAM ou módulo compatível
-- Ajuste pins em camera_config.h se necessário
-```
+## Autor
 
-**SD Card não detectado**
-```
-- Formate como FAT32
-- Use cartão classe 10
-- Verifique conexões SD_MMC
-```
+Desenvolvido com ESP32-CAM, Arduino Framework e PlatformIO.
 
-**Servos não respondem**
-```
-- Verifique alimentação (servos precisam de corrente adequada)
-- Confirme GPIOs corretos em camera_config.h
-- Teste com código simples de servo primeiro
-```
+## Referências
 
-**WiFi não conecta**
-```
-- Verifique SSID/senha no config.json
-- Tente modo AP (ap_mode: true)
-- Verifique força do sinal
-```
+- [ESP32-CAM Datasheet](Datasheet%20ESP32-CAM.pdf)
+- [ESP32 Datasheet](ESP32-D0WDQ6-V3.PDF)
+- [PlatformIO Documentation](https://docs.platformio.org/)
+- [ESPAsyncWebServer](https://github.com/ESP32Async/ESPAsyncWebServer)
 
-**Stream lento ou travando**
-```
-- Reduza qualidade JPEG (aumentar número em config)
-- Use WiFi mais próximo
-- Evite múltiplas conexões simultâneas
-```
+## Roadmap / Melhorias Futuras
 
-### Debug via Serial
+- [ ] Autenticação de usuário
+- [ ] HTTPS/SSL
+- [ ] Gravação de vídeo no SD
+- [ ] Detecção de movimento
+- [ ] Notificações push
+- [ ] Suporte MQTT
+- [ ] Time-lapse automático
+- [ ] Múltiplos streams simultâneos
 
-```cpp
-// Habilite debug detalhado no platformio.ini
-build_flags = -DCORE_DEBUG_LEVEL=5
-```
+## Contribuindo
 
-## 📈 Melhorias Futuras
-
-- [ ] Reconhecimento de objetos com TensorFlow Lite
-- [ ] Gravação de vídeo no SD card
-- [ ] Detecção de rostos
-- [ ] Rastreamento multi-objeto
-- [ ] OTA (Over-The-Air) updates
-- [ ] Integração com MQTT/Home Assistant
-- [ ] Modo noturno com LED IR
-- [ ] Calibração automática de servos
-
-## 📝 Estrutura do Projeto
-
-```
-ESP32-object_tracker/
-├── ESP32-object_tracker.ino  # Código principal
-├── camera_config.h            # Configuração de pinos
-├── motion_detector.h/cpp      # Detecção de movimento
-├── servo_controller.h/cpp     # Controle PID dos servos
-├── sd_manager.h/cpp           # Gerenciamento SD card
-├── web_server.h               # Declarações web server
-├── platformio.ini             # Configuração PlatformIO
-├── README.md                  # Esta documentação
-└── data/                      # Arquivos para SD card
-    ├── index.html
-    ├── style.css
-    ├── app.js
-    └── config.json
-```
-
-## 📄 Licença
-
-MIT License - Livre para uso pessoal e comercial
-
-## 🤝 Contribuições
-
-Contribuições são bem-vindas! Sinta-se à vontade para:
-- Reportar bugs
-- Sugerir melhorias
-- Enviar pull requests
-
-## 📞 Suporte
-
-Para dúvidas ou problemas:
-1. Verifique a seção Troubleshooting
-2. Revise o Serial Monitor para mensagens de erro
-3. Abra uma issue no repositório
+Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull requests.
 
 ---
 
-**Desenvolvido com ❤️ para a comunidade maker ESP32**
-
-Versão: 1.0
-Data: 2024
+**Nota:** Este projeto foi desenvolvido e testado com módulos ESP32-CAM AI-Thinker. Outros modelos podem requerer ajustes nos pinos e configurações.

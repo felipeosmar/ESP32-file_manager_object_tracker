@@ -21,6 +21,7 @@
 #include <Update.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_task_wdt.h>
 #include "esp_camera.h"
 #include "camera_config.h"
 #include "web_server.h"
@@ -99,7 +100,7 @@ void setup() {
   // Setup web server
   setupWebServer();
 
-  Serial.println("\nB=== System Ready ===");
+  Serial.println("\nC=== System Ready ===");
   Serial.print("Camera stream: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
@@ -137,11 +138,11 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 20000000;  // 20MHz is more stable for OV2640 sensor
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA; //Opções: QVGA (320x240), VGA (640x480), SVGA (800x600)
-  config.jpeg_quality = 12;
-  config.fb_count = 2;
+  config.jpeg_quality = 12;  // Higher value = more compression, more stable (10-63 range)
+  config.fb_count = 2;  // 2 buffers is more stable than 3 for high FPS
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -151,8 +152,8 @@ bool initCamera() {
 
   // Camera sensor settings
   sensor_t *s = esp_camera_sensor_get();
-  s->set_framesize(s, FRAMESIZE_VGA);
-  s->set_quality(s, 12);
+  s->set_framesize(s, FRAMESIZE_QVGA);
+  s->set_quality(s, 12);  // 12 is a good balance between quality and stability
   s->set_brightness(s, 0);
   s->set_contrast(s, 0);
   s->set_saturation(s, 0);
@@ -279,7 +280,14 @@ void setupWebServer() {
   });
 
   // Camera stream endpoint - MJPEG streaming
-  server.on("/stream", HTTP_GET, streamJpg);
+  server.on("/stream", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Block stream requests during OTA upload
+    if (otaUploadInProgress) {
+      request->send(503, "text/plain", "Service unavailable - firmware update in progress");
+      return;
+    }
+    streamJpg(request);
+  });
 
   // Health check endpoint with system diagnostics
   server.on("/api/health/status", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -432,6 +440,9 @@ void setupWebServer() {
   });
 
   // OTA Firmware Upload endpoint
+  // Static variable to track upload errors across callbacks
+  static String otaUploadError = "";
+
   server.on("/api/firmware/upload", HTTP_POST,
     // Response callback (executed after upload completes)
     [](AsyncWebServerRequest *request) {
@@ -442,22 +453,53 @@ void setupWebServer() {
         Serial.println("OTA upload finished - SD card mutex released");
       }
 
-      // Check for errors
+      // Check for custom error from upload callback
+      if (otaUploadError.length() > 0) {
+        Serial.printf("OTA Upload error: %s\n", otaUploadError.c_str());
+        request->send(500, "application/json",
+          "{\"error\":\"" + otaUploadError + "\"}");
+        otaUploadError = ""; // Reset error
+
+        // Re-enable camera
+        cameraActive = true;
+        Serial.println("Camera access resumed after error");
+
+        // Try to reinitialize camera
+        delay(100);
+        if (initCamera()) {
+          Serial.println("Camera reinitialized successfully after OTA error");
+        }
+        return;
+      }
+
+      // Check for Update library errors
       if (Update.hasError()) {
         String error = "Update failed. Error: ";
         error += Update.errorString();
         Serial.println(error);
         request->send(500, "application/json",
           "{\"error\":\"" + error + "\"}");
+
+        // Re-enable camera
+        cameraActive = true;
+        Serial.println("Camera access resumed after error");
+
+        // Try to reinitialize camera
+        delay(100);
+        if (initCamera()) {
+          Serial.println("Camera reinitialized successfully after OTA error");
+        }
         return;
       }
 
       // Success - send response and reboot
       Serial.println("OTA Update successful! Rebooting...");
       request->send(200, "application/json",
-        "{\"status\":\"ok\",\"message\":\"Firmware updated. Rebooting...\"}");
+        "{\"status\":\"ok\",\"message\":\"Firmware updated successfully. Device will reboot now.\"}");
 
-      delay(1000); // Give time for response to be sent
+      // Give enough time for response to be fully transmitted to client
+      delay(2000);
+      Serial.println("Restarting ESP32 now...");
       ESP.restart();
     },
 
@@ -467,76 +509,111 @@ void setupWebServer() {
 
       // First chunk - initialize OTA update
       if (index == 0) {
-        Serial.printf("OTA Update started: %s\n", filename.c_str());
+        Serial.printf("\n=== OTA Update started: %s ===\n", filename.c_str());
+        Serial.printf("File size: %d bytes\n", request->contentLength());
+        otaUploadError = ""; // Reset error flag
+
+        // Disable watchdog for this task to prevent timeout during camera deinit
+        Serial.println("[0/6] Disabling watchdog timer...");
+        esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+        esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
 
         // Stop camera access from loop() task
         cameraActive = false;
-        Serial.println("Camera access paused");
-        delay(200); // Give time for loop() to exit camera operations
+        Serial.println("[1/6] Camera access paused");
+        delay(300); // Increased delay to ensure camera operations stop
 
         // Deinitialize camera to free shared pins (SD card shares pins with camera)
-        Serial.println("Deinitializing camera before OTA...");
+        Serial.println("[2/6] Deinitializing camera...");
         esp_err_t err = esp_camera_deinit();
         if (err != ESP_OK) {
-          Serial.printf("Camera deinit warning: %d\n", err);
+          Serial.printf("Camera deinit warning: 0x%x\n", err);
         } else {
           Serial.println("Camera deinitialized successfully");
         }
-        delay(100); // Give time for camera to fully stop
+        delay(200); // Increased delay for camera to fully stop
+
+        // Free up memory before OTA
+        Serial.println("[3/6] Freeing memory...");
+        Serial.printf("Free heap before OTA: %d bytes\n", ESP.getFreeHeap());
 
         // Acquire SD card mutex to block file operations
-        if (xSemaphoreTake(sdCardMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-          Serial.println("OTA Upload failed: SD card busy");
-          return; // Mutex unavailable, upload will fail
+        Serial.println("[4/6] Acquiring SD card mutex...");
+        if (xSemaphoreTake(sdCardMutex, pdMS_TO_TICKS(10000)) != pdTRUE) {
+          Serial.println("ERROR: SD card busy - mutex timeout");
+          otaUploadError = "SD card is busy";
+          cameraActive = true; // Re-enable camera on error
+          return;
         }
         otaUploadInProgress = true;
-        Serial.println("OTA upload - SD card mutex acquired");
+        Serial.println("SD card mutex acquired");
 
         // Validate ESP32 firmware format
+        Serial.println("[5/6] Validating firmware...");
         if (!isValidESP32Firmware(data, len)) {
-          Serial.println("OTA Upload failed: Invalid firmware file");
+          Serial.println("ERROR: Invalid firmware file - magic byte check failed");
+          otaUploadError = "Invalid ESP32 firmware file (magic byte check failed)";
           xSemaphoreGive(sdCardMutex);
           otaUploadInProgress = false;
-          return; // Invalid firmware, upload will fail
+          cameraActive = true; // Re-enable camera on error
+          return;
         }
+        Serial.println("Firmware validation passed");
 
         // Begin OTA update
+        Serial.println("[6/6] Initializing OTA update...");
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
-          Serial.printf("OTA Update.begin() failed: %s\n", Update.errorString());
+          Serial.printf("ERROR: Update.begin() failed: %s\n", Update.errorString());
+          otaUploadError = "Failed to begin OTA update: ";
+          otaUploadError += Update.errorString();
           xSemaphoreGive(sdCardMutex);
           otaUploadInProgress = false;
+          cameraActive = true; // Re-enable camera on error
           return;
         }
 
-        Serial.println("OTA Update initialized successfully");
+        Serial.println("=== OTA Update initialized - ready to receive data ===\n");
       }
 
       // Write chunk to flash
       if (len) {
+        // Feed watchdog before write operation
+        yield();
+
         size_t written = Update.write(data, len);
         if (written != len) {
-          Serial.printf("OTA Write error: wrote %d of %d bytes\n", written, len);
+          Serial.printf("ERROR: OTA Write failed - wrote %d of %d bytes\n", written, len);
+          otaUploadError = "Failed to write firmware data to flash";
           Update.abort();
           return;
         }
 
-        // Feed watchdog every ~8KB to prevent timeout
-        if (index % 8192 == 0) {
-          delay(1);
-        }
+        // Feed watchdog after write operation
+        yield();
 
-        // Log progress every 64KB
-        if (index % 65536 == 0) {
-          Serial.printf("OTA Progress: %d bytes written\n", index + len);
+        // Log progress more frequently for debugging
+        if (index % 32768 == 0 && index > 0) { // Every 32KB
+          Serial.printf("Progress: %d KB written (%.1f%%)\n",
+                       (index + len) / 1024,
+                       ((float)(index + len) / request->contentLength()) * 100);
+          Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
         }
       }
 
       // Final chunk - complete OTA update
       if (final) {
+        Serial.println("\n=== Finalizing OTA update ===");
+        Serial.printf("Total received: %d bytes\n", index + len);
+
         if (Update.end(true)) {
-          Serial.printf("OTA Update completed successfully: %d bytes\n", index + len);
+          Serial.println("SUCCESS: OTA Update completed!");
+          Serial.printf("Final size: %d bytes\n", index + len);
+          Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
+          Serial.println("Device will reboot after sending response...");
         } else {
-          Serial.printf("OTA Update.end() failed: %s\n", Update.errorString());
+          Serial.printf("ERROR: Update.end() failed: %s\n", Update.errorString());
+          otaUploadError = "Failed to finalize OTA update: ";
+          otaUploadError += Update.errorString();
         }
       }
     }
@@ -959,9 +1036,9 @@ void streamJpg(AsyncWebServerRequest *request) {
           return 0; // Stop streaming during OTA
         }
 
-        // Frame rate limit
-        if (now - lastFrameTime < 100) {  // 100ms = 10 FPS
-          delay(100 - (now - lastFrameTime));
+        // Frame rate limit (~16 FPS for stability)
+        if (now - lastFrameTime < 60) {  // 60ms = ~16 FPS (more stable than 50ms)
+          delay(60 - (now - lastFrameTime));
         }
 
         currentFrame = esp_camera_fb_get();
@@ -976,13 +1053,22 @@ void streamJpg(AsyncWebServerRequest *request) {
           return 0;
         }
 
+        // Validate frame buffer integrity
+        if (currentFrame->len == 0 || currentFrame->buf == NULL) {
+          Serial.println("Invalid frame buffer detected - skipping");
+          esp_camera_fb_return(currentFrame);
+          currentFrame = NULL;
+          delay(50);
+          return 0;
+        }
+
         frameOffset = 0;
         headerSent = false;
         lastFrameTime = millis();
         frameCount++;
 
-        // Only log every 10th frame to reduce CPU usage
-        if (frameCount % 10 == 0) {
+        // Only log every 1000th frame to reduce CPU usage
+        if (frameCount % 1000 == 0) {
           Serial.printf("Frame #%d: %d bytes\n", frameCount, currentFrame->len);
         }
       }

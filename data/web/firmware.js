@@ -80,6 +80,7 @@ function handleFileSelection(file) {
 // Upload firmware
 async function uploadFirmware(file) {
     uploadInProgress = true;
+    let uploadCompleted = false; // Track if upload reached 100%
 
     // Update UI
     document.getElementById('uploadZone').classList.add('uploading');
@@ -105,16 +106,26 @@ async function uploadFirmware(file) {
     xhr.upload.addEventListener('progress', function(e) {
         if (e.lengthComputable) {
             const percent = Math.round((e.loaded / e.total) * 100);
-            updateProgress(percent, 'uploading');
+            updateProgress(percent);
+
+            // Mark as completed when upload reaches 100%
+            if (percent >= 100) {
+                uploadCompleted = true;
+                console.log('Upload data transmission completed (100%)');
+            }
         }
     });
 
     // Upload complete
     xhr.addEventListener('load', function() {
+        console.log('Upload complete - Status:', xhr.status);
+        console.log('Response text:', xhr.responseText);
+
         if (xhr.status === 200) {
             // Parse response
             try {
                 const response = JSON.parse(xhr.responseText);
+                console.log('Parsed response:', response);
 
                 if (response.error) {
                     handleUploadError(response.error);
@@ -123,6 +134,7 @@ async function uploadFirmware(file) {
                 }
             } catch (e) {
                 console.error('Failed to parse response:', e);
+                console.error('Response was:', xhr.responseText);
                 handleUploadError('Erro ao processar resposta do servidor');
             }
         } else {
@@ -135,75 +147,105 @@ async function uploadFirmware(file) {
             } catch (e) {
                 errorMsg = `Erro no upload: ${xhr.status}`;
             }
+            console.error('Upload failed with status:', xhr.status, 'Message:', errorMsg);
             handleUploadError(errorMsg);
         }
     });
 
     // Upload error
-    xhr.addEventListener('error', function() {
-        handleUploadError('Erro de conexão durante o upload');
+    xhr.addEventListener('error', function(e) {
+        console.error('XHR error event:', e);
+        console.error('XHR state:', xhr.readyState);
+        console.error('XHR status:', xhr.status);
+        console.log('Upload completed flag:', uploadCompleted);
+
+        // If upload was completed (100%), treat connection error as success
+        // This happens because ESP32 reboots immediately after sending response
+        if (uploadCompleted) {
+            console.log('Upload was completed before connection closed - treating as success');
+            handleUploadSuccess();
+        } else {
+            handleUploadError('Erro de conexão durante o upload. Verifique a conexão com o dispositivo.');
+        }
     });
 
     // Upload timeout
     xhr.addEventListener('timeout', function() {
+        console.error('XHR timeout - upload took too long');
         handleUploadError('Timeout: o upload demorou muito tempo');
+    });
+
+    // Upload abort
+    xhr.addEventListener('abort', function() {
+        console.error('XHR aborted');
+        handleUploadError('Upload cancelado');
     });
 
     // Send request
     console.log('Sending firmware to /api/firmware/upload');
+    console.log('File size:', file.size, 'bytes');
     xhr.open('POST', '/api/firmware/upload');
-    xhr.timeout = 180000; // 3 minutes timeout
+    xhr.timeout = 300000; // Increased to 5 minutes timeout for large files
     xhr.send(formData);
 }
 
 // Update progress bar
-function updateProgress(percent, stage) {
+function updateProgress(percent, statusText = null) {
     const progressFill = document.getElementById('progressFill');
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
 
-    // Cap at 95% during upload, reserve 95-100% for validation/flashing/reboot
-    if (stage === 'uploading') {
-        percent = Math.min(percent, 95);
-        statusMessage.textContent = 'Enviando firmware...';
-    } else if (stage === 'validating') {
-        percent = 96;
-        statusMessage.textContent = 'Validando arquivo...';
-    } else if (stage === 'flashing') {
-        percent = 98;
-        statusMessage.textContent = 'Gravando na flash...';
-    } else if (stage === 'rebooting') {
-        percent = 100;
-        statusMessage.textContent = 'Reiniciando dispositivo...';
-    }
-
+    // Update progress bar and percentage
     progressFill.style.width = percent + '%';
     progressText.textContent = percent + '%';
+
+    // Update status message if provided
+    if (statusText) {
+        statusMessage.textContent = statusText;
+    } else if (percent < 100) {
+        statusMessage.textContent = 'Enviando firmware...';
+    } else {
+        statusMessage.textContent = 'Upload completo';
+    }
 }
 
 // Handle upload success
 function handleUploadSuccess() {
-    console.log('Firmware upload successful');
+    console.log('Firmware upload successful - ESP32 is flashing and rebooting');
 
-    // Update progress stages
-    updateProgress(96, 'validating');
+    // Show status messages without simulating fake progress
+    const statusMessage = document.getElementById('statusMessage');
+    const progressText = document.getElementById('progressText');
+
+    // Hide percentage, show status text only
+    progressText.style.display = 'none';
+
+    // Show processing status
+    statusMessage.textContent = '⚡ Gravando firmware na flash...';
+
     setTimeout(() => {
-        updateProgress(98, 'flashing');
+        statusMessage.textContent = '🔄 Dispositivo reiniciando...';
+
         setTimeout(() => {
-            updateProgress(100, 'rebooting');
+            // Hide progress bar, show success message
+            document.getElementById('progressSection').style.display = 'none';
+            document.getElementById('successSection').style.display = 'block';
+            document.getElementById('successMessage').textContent =
+                'Firmware gravado com sucesso! O dispositivo está reiniciando...';
 
-            // Show success message
+            // Update status indicator
+            const statusDot = document.getElementById('upload-status');
+            const statusText = document.getElementById('status-text');
+            statusDot.classList.remove('uploading');
+            statusDot.classList.add('connected');
+            statusText.textContent = 'Processando';
+
+            // Start reconnect polling
             setTimeout(() => {
-                document.getElementById('progressSection').style.display = 'none';
-                document.getElementById('successSection').style.display = 'block';
-                document.getElementById('successMessage').textContent =
-                    'Firmware gravado com sucesso. O dispositivo está reiniciando...';
-
-                // Start auto-reconnect
                 startReconnectPolling();
-            }, 1000);
-        }, 500);
-    }, 500);
+            }, 2000);
+        }, 1500);
+    }, 1000);
 }
 
 // Handle upload error
@@ -240,38 +282,57 @@ function startReconnectPolling() {
     console.log('Starting reconnect polling...');
 
     const reconnectInfo = document.getElementById('reconnectInfo');
-    reconnectInfo.textContent = 'Aguardando reconexão...';
+    reconnectInfo.innerHTML = '⏳ Aguardando reconexão do dispositivo...<br><small>(O ESP32 leva cerca de 5-10 segundos para reiniciar)</small>';
 
     let attempts = 0;
-    const maxAttempts = 20;
-    const pollInterval = 3000; // 3 seconds
+    const maxAttempts = 30; // Increased from 20 to 30 attempts
+    const pollInterval = 2000; // Reduced from 3s to 2s for faster detection
 
     const pollTimer = setInterval(async () => {
         attempts++;
         console.log(`Reconnect attempt ${attempts}/${maxAttempts}`);
 
-        reconnectInfo.textContent = `Tentativa ${attempts}/${maxAttempts} - Aguardando dispositivo...`;
+        reconnectInfo.innerHTML =
+            `⏳ Tentativa ${attempts}/${maxAttempts}<br>` +
+            `<small>Aguardando o dispositivo voltar online...</small>`;
 
         try {
+            // Use a shorter timeout for the fetch request
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1500);
+
             const response = await fetch('/api/health/status', {
                 method: 'GET',
-                cache: 'no-cache'
+                cache: 'no-cache',
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             if (response.ok) {
                 // Device is back online!
                 clearInterval(pollTimer);
-                console.log('Device reconnected successfully');
+                console.log('Device reconnected successfully!');
 
-                reconnectInfo.textContent = 'Dispositivo online! Redirecionando...';
+                reconnectInfo.innerHTML =
+                    '✅ <strong>Dispositivo online!</strong><br>' +
+                    '<small>Atualização concluída com sucesso. Redirecionando...</small>';
 
                 // Remove navigation blocker
                 window.removeEventListener('beforeunload', preventNavigation);
 
-                // Reload page after 2 seconds
+                // Update final status
+                const statusDot = document.getElementById('upload-status');
+                const statusText = document.getElementById('status-text');
+                statusDot.classList.remove('uploading');
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Completo';
+
+                // Reload page after 3 seconds to allow user to see success message
                 setTimeout(() => {
+                    console.log('Redirecting to home page...');
                     window.location.href = '/';
-                }, 2000);
+                }, 3000);
             }
         } catch (error) {
             // Device not yet available, continue polling
@@ -281,14 +342,21 @@ function startReconnectPolling() {
         if (attempts >= maxAttempts) {
             // Timeout
             clearInterval(pollTimer);
-            console.error('Reconnect timeout');
+            console.error('Reconnect timeout - device did not come back online');
 
             reconnectInfo.innerHTML =
-                'Tempo esgotado aguardando reconexão.<br>' +
-                '<button onclick="window.location.reload()" class="reload-btn">Tentar Novamente</button>';
+                '⚠️ <strong>Tempo esgotado aguardando reconexão</strong><br>' +
+                '<small>O dispositivo pode ter reiniciado com sucesso, mas não está respondendo.</small><br>' +
+                '<button onclick="window.location.reload()" style="margin-top: 10px; padding: 8px 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;">Recarregar Página</button>';
 
             // Remove navigation blocker
             window.removeEventListener('beforeunload', preventNavigation);
+
+            // Update status
+            const statusDot = document.getElementById('upload-status');
+            const statusText = document.getElementById('status-text');
+            statusDot.classList.remove('uploading');
+            statusText.textContent = 'Timeout';
         }
     }, pollInterval);
 }

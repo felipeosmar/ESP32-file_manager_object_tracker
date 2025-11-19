@@ -25,7 +25,10 @@
       "mcp__filesystem__directory_tree",
       "mcp__filesystem__read_text_file",
       "mcp__sequential-thinking__sequentialthinking",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(cat:*)",
+      "Bash(node -c:*)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []
